@@ -56,6 +56,23 @@ async function openActions(page, name) {
 }
 
 /**
+ * Share sample.pdf with a new user and open its actions menu as that user
+ *
+ * @param {import('@playwright/test').Page} page page of the logged in owner
+ * @param {import('@playwright/test').Browser} browser the browser
+ * @param {string} baseURL the base URL
+ * @param {number} permissions OCS share permissions
+ */
+async function openSharedActions(page, browser, baseURL, permissions) {
+	const recipient = await createRandomUser()
+	await createShare(page, { path: '/sample.pdf', shareType: 0, shareWith: recipient.userId, permissions })
+
+	const recipientPage = await loggedInPage(browser, baseURL, recipient)
+	await gotoWithPdfDefault(recipientPage, 'apps/files/', false)
+	return openActions(recipientPage, 'sample.pdf')
+}
+
+/**
  * Create a public link for a file and open it in a logged out page
  *
  * @param {import('@playwright/test').Page} page page of the logged in owner
@@ -107,16 +124,15 @@ test.describe('PDF with default settings', () => {
 		await expect(menu.getByRole('menuitem', { name: 'Edit in Nextcloud Office' })).toBeVisible()
 	})
 
-	// The action checks Permission.UPDATE, which @nextcloud/files also sets for
-	// the rename permission every received share has.
-	test.fixme('does not offer editing in Euro-Office on a read-only share', async ({ page, browser, baseURL }) => {
-		const recipient = await createRandomUser()
-		await createShare(page, { path: '/sample.pdf', shareType: 0, shareWith: recipient.userId, permissions: 1 })
+	test('offers editing in Euro-Office on an editable share', async ({ page, browser, baseURL }) => {
+		const menu = await openSharedActions(page, browser, baseURL, 3)
 
-		const recipientPage = await loggedInPage(browser, baseURL, recipient)
-		await gotoWithPdfDefault(recipientPage, 'apps/files/', false)
+		await expect(menu.getByRole('menuitem', { name: 'Edit in Nextcloud Office' })).toBeVisible()
+	})
 
-		const menu = await openActions(recipientPage, 'sample.pdf')
+	test('does not offer editing in Euro-Office on a read-only share', async ({ page, browser, baseURL }) => {
+		const menu = await openSharedActions(page, browser, baseURL, 1)
+
 		await expect(menu.getByRole('menuitem', { name: 'Download', exact: true })).toBeVisible()
 		await expect(menu.getByRole('menuitem', { name: 'Edit in Nextcloud Office' })).toHaveCount(0)
 	})
