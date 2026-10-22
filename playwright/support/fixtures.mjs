@@ -17,8 +17,7 @@ export const test = base.extend({
 		await use(await createRandomUser())
 	},
 	page: async ({ account, browser, baseURL }, use) => {
-		const page = await browser.newPage({ storageState: undefined, baseURL })
-		await login(page.request, account)
+		const page = await loggedInPage(browser, baseURL, account)
 		// Cookie-authenticated DAV requests need the CSRF token.
 		const { token } = await (await page.request.get('./csrftoken', { failOnStatusCode: true })).json()
 		await page.context().setExtraHTTPHeaders({ requesttoken: token })
@@ -35,5 +34,34 @@ export const test = base.extend({
 		})
 	},
 })
+
+/**
+ * Share a file of the logged in user through the OCS API
+ *
+ * @param {import('@playwright/test').Page} page page of the logged in owner
+ * @param {object} share OCS share parameters, e.g. `{ path, shareType, shareWith, permissions }`
+ * @return {Promise<string>} the share token
+ */
+export async function createShare(page, share) {
+	const response = await page.request.post('../ocs/v2.php/apps/files_sharing/api/v1/shares?format=json', {
+		headers: { 'OCS-APIREQUEST': 'true' },
+		form: share,
+		failOnStatusCode: true,
+	})
+	return (await response.json()).ocs.data.token
+}
+
+/**
+ * A new page logged in as the given user
+ *
+ * @param {import('@playwright/test').Browser} browser the browser
+ * @param {string} baseURL the base URL
+ * @param {import('@nextcloud/e2e-test-server').User} user the user to log in
+ */
+export async function loggedInPage(browser, baseURL, user) {
+	const page = await browser.newPage({ storageState: undefined, baseURL })
+	await login(page.request, user)
+	return page
+}
 
 export { expect } from '@playwright/test'

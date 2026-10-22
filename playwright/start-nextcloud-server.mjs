@@ -63,19 +63,23 @@ async function startDocumentServer() {
 		Image: DOCUMENTSERVER_IMAGE,
 		name: DOCUMENTSERVER_CONTAINER,
 		Env: ['JWT_ENABLED=true', `JWT_SECRET=${JWT_SECRET}`],
+		// The image does not declare the port, and Docker Engine only publishes declared ones.
+		ExposedPorts: { '80/tcp': {} },
 		HostConfig: {
 			PortBindings: { '80/tcp': [{ HostPort: String(DOCUMENTSERVER_PORT) }] },
 		},
 	})
 	await container.start()
 
-	for (let tries = 0; tries < 120; tries++) {
+	for (let tries = 0; tries < 150; tries++) {
 		if (await isUp(`http://127.0.0.1:${DOCUMENTSERVER_PORT}/healthcheck`)) {
 			console.log('└─ Document server is ready')
 			return bridgeIp(container)
 		}
 		await new Promise((resolve) => setTimeout(resolve, 2000))
 	}
+	const logs = await container.logs({ stdout: true, stderr: true, tail: 100 })
+	console.error(logs.toString())
 	throw new Error('Document server did not become ready')
 }
 

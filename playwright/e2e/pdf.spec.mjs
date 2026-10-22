@@ -4,9 +4,12 @@
  */
 
 import { runOcc } from '@nextcloud/e2e-test-server/docker'
-import { expect, test } from '../support/fixtures.mjs'
+import { createRandomUser } from '@nextcloud/e2e-test-server/playwright'
+import { createShare, expect, loggedInPage, test } from '../support/fixtures.mjs'
 
 const SAMPLE_PDF = 'assets/document-templates/sample/sample.pdf'
+const PDFVIEWER_FRAME = 'iframe[src*="/apps/files_pdfviewer/"]'
+const EUROOFFICE_FRAME = '#euroofficeViewerFrame'
 
 /**
  * Open a page once it reflects the PDF default set through occ, which the web
@@ -33,24 +36,89 @@ async function pdfHandler(page) {
 	return page.evaluate(() => OCA.Viewer.availableHandlers.find((handler) => handler.mimes?.includes('application/pdf'))?.id)
 }
 
+/**
+ * @param {import('@playwright/test').Page} page the page
+ * @param {string} name the file name
+ */
+async function openInFiles(page, name) {
+	await page.locator(`[data-cy-files-list-row-name="${name}"] .files-list__row-name-link`).click()
+}
+
+/**
+ * Open the actions menu of a file in the Files list
+ *
+ * @param {import('@playwright/test').Page} page the page
+ * @param {string} name the file name
+ */
+async function openActions(page, name) {
+	await page.locator(`[data-cy-files-list-row-name="${name}"]`).getByRole('button', { name: /actions/i }).click()
+	return page.getByRole('menu')
+}
+
+/**
+ * Create a public link for a file and open it in a logged out page
+ *
+ * @param {import('@playwright/test').Page} page page of the logged in owner
+ * @param {import('@playwright/test').Browser} browser the browser
+ * @param {string} baseURL the base URL
+ * @param {boolean} pdfDefault whether Euro-Office is expected to be the PDF default
+ */
+async function openPublicLink(page, browser, baseURL, pdfDefault) {
+	const token = await createShare(page, { path: '/sample.pdf', shareType: 3 })
+	const visitor = await browser.newPage({ storageState: undefined, baseURL })
+	await gotoWithPdfDefault(visitor, `s/${token}`, pdfDefault)
+	return visitor
+}
+
 test.describe('PDF with default settings', () => {
 	test.beforeAll(async () => {
 		await runOcc(['config:app:delete', 'eurooffice', 'defFormats'])
 	})
 
-	test('opens in files_pdfviewer', async ({ page, upload }) => {
+	test.beforeEach(async ({ upload }) => {
 		await upload(SAMPLE_PDF, 'sample.pdf')
-		await gotoWithPdfDefault(page, 'apps/files/', false)
-		await page.locator('[data-cy-files-list-row-name="sample.pdf"] .files-list__row-name-link').click()
+	})
 
-		await expect(page.locator('iframe[src*="/apps/files_pdfviewer/"]')).toBeVisible()
-		await expect(page.locator('#euroofficeViewerFrame')).toHaveCount(0)
+	test('opens in files_pdfviewer', async ({ page }) => {
+		await gotoWithPdfDefault(page, 'apps/files/', false)
+		await openInFiles(page, 'sample.pdf')
+
+		await expect(page.locator(PDFVIEWER_FRAME)).toBeVisible()
+		await expect(page.locator(EUROOFFICE_FRAME)).toHaveCount(0)
 	})
 
 	test('is handled by files_pdfviewer in Talk', async ({ page }) => {
 		await gotoWithPdfDefault(page, 'apps/spreed/', false)
 
 		expect(await pdfHandler(page)).toBe('pdf')
+	})
+
+	test('opens in files_pdfviewer from a public link', async ({ page, browser, baseURL }) => {
+		const visitor = await openPublicLink(page, browser, baseURL, false)
+
+		await expect(visitor.locator(PDFVIEWER_FRAME)).toBeVisible()
+		await expect(visitor.locator(EUROOFFICE_FRAME)).toHaveCount(0)
+	})
+
+	test('offers editing in Euro-Office to the owner', async ({ page }) => {
+		await gotoWithPdfDefault(page, 'apps/files/', false)
+
+		const menu = await openActions(page, 'sample.pdf')
+		await expect(menu.getByRole('menuitem', { name: 'Edit in Nextcloud Office' })).toBeVisible()
+	})
+
+	// The action checks Permission.UPDATE, which @nextcloud/files also sets for
+	// the rename permission every received share has.
+	test.fixme('does not offer editing in Euro-Office on a read-only share', async ({ page, browser, baseURL }) => {
+		const recipient = await createRandomUser()
+		await createShare(page, { path: '/sample.pdf', shareType: 0, shareWith: recipient.userId, permissions: 1 })
+
+		const recipientPage = await loggedInPage(browser, baseURL, recipient)
+		await gotoWithPdfDefault(recipientPage, 'apps/files/', false)
+
+		const menu = await openActions(recipientPage, 'sample.pdf')
+		await expect(menu.getByRole('menuitem', { name: 'Download', exact: true })).toBeVisible()
+		await expect(menu.getByRole('menuitem', { name: 'Edit in Nextcloud Office' })).toHaveCount(0)
 	})
 })
 
@@ -63,18 +131,33 @@ test.describe('PDF enabled as Euro-Office default format', () => {
 		await runOcc(['config:app:delete', 'eurooffice', 'defFormats'])
 	})
 
-	test('opens in Euro-Office from Files', async ({ page, upload }) => {
+	test.beforeEach(async ({ upload }) => {
 		await upload(SAMPLE_PDF, 'sample.pdf')
-		await gotoWithPdfDefault(page, 'apps/files/', true)
-		await page.locator('[data-cy-files-list-row-name="sample.pdf"] .files-list__row-name-link').click()
+	})
 
-		await expect(page.locator('#euroofficeViewerFrame')).toBeVisible()
-		await expect(page.locator('iframe[src*="/apps/files_pdfviewer/"]')).toHaveCount(0)
+	test('opens and loads in Euro-Office from Files', async ({ page }) => {
+		await gotoWithPdfDefault(page, 'apps/files/', true)
+		await openInFiles(page, 'sample.pdf')
+
+		await expect(page.locator(EUROOFFICE_FRAME)).toBeVisible()
+		await expect(page.locator(PDFVIEWER_FRAME)).toHaveCount(0)
+
+		// The page count is only known once the document server loaded the file.
+		const editor = page.frameLocator(EUROOFFICE_FRAME).frameLocator('iframe[name="frameEditor"]')
+		await expect(editor.locator('#label-pages')).toHaveText('Page 1 of 7', { timeout: 60_000 })
 	})
 
 	test('is handled by Euro-Office in Talk', async ({ page }) => {
 		await gotoWithPdfDefault(page, 'apps/spreed/', true)
 
 		expect(await pdfHandler(page)).toBe('eurooffice')
+	})
+
+	// The public share page still leaves PDFs to files_pdfviewer when it is installed.
+	test.fixme('opens in Euro-Office from a public link', async ({ page, browser, baseURL }) => {
+		const visitor = await openPublicLink(page, browser, baseURL, true)
+
+		await expect(visitor.locator('#euroofficeFrame')).toBeVisible()
+		await expect(visitor.locator(PDFVIEWER_FRAME)).toHaveCount(0)
 	})
 })
