@@ -45,6 +45,20 @@ async function openInFiles(page, name) {
 }
 
 /**
+ * Assert that sample.pdf is shown in Euro-Office and not in files_pdfviewer
+ *
+ * @param {import('@playwright/test').Page} page the page
+ */
+async function expectLoadedInEurooffice(page) {
+	await expect(page.locator(EUROOFFICE_FRAME)).toBeVisible()
+	await expect(page.locator(PDFVIEWER_FRAME)).toHaveCount(0)
+
+	// The page count is only known once the document server loaded the file.
+	const editor = page.frameLocator(EUROOFFICE_FRAME).frameLocator('iframe[name="frameEditor"]')
+	await expect(editor.locator('#label-pages')).toHaveText('Page 1 of 7', { timeout: 60_000 })
+}
+
+/**
  * Open the actions menu of a file in the Files list
  *
  * @param {import('@playwright/test').Page} page the page
@@ -155,12 +169,7 @@ test.describe('PDF enabled as Euro-Office default format', () => {
 		await gotoWithPdfDefault(page, 'apps/files/', true)
 		await openInFiles(page, 'sample.pdf')
 
-		await expect(page.locator(EUROOFFICE_FRAME)).toBeVisible()
-		await expect(page.locator(PDFVIEWER_FRAME)).toHaveCount(0)
-
-		// The page count is only known once the document server loaded the file.
-		const editor = page.frameLocator(EUROOFFICE_FRAME).frameLocator('iframe[name="frameEditor"]')
-		await expect(editor.locator('#label-pages')).toHaveText('Page 1 of 7', { timeout: 60_000 })
+		await expectLoadedInEurooffice(page)
 	})
 
 	test('is handled by Euro-Office in Talk', async ({ page }) => {
@@ -169,11 +178,9 @@ test.describe('PDF enabled as Euro-Office default format', () => {
 		expect(await pdfHandler(page)).toBe('eurooffice')
 	})
 
-	// The public share page still leaves PDFs to files_pdfviewer when it is installed.
-	test.fixme('opens in Euro-Office from a public link', async ({ page, browser, baseURL }) => {
+	test('opens and loads in Euro-Office from a public link', async ({ page, browser, baseURL }) => {
 		const visitor = await openPublicLink(page, browser, baseURL, true)
 
-		await expect(visitor.locator('#euroofficeFrame')).toBeVisible()
-		await expect(visitor.locator(PDFVIEWER_FRAME)).toHaveCount(0)
+		await expectLoadedInEurooffice(visitor)
 	})
 })
