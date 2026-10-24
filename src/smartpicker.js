@@ -183,12 +183,17 @@ export async function handleSmartPickerRequest({ selectedText, source, providerI
 /**
  * Whether a picker result is a link rather than content.
  *
+ * Only http(s) counts. new URL() accepts any "word:" prefix as a scheme, so an
+ * Assistant answer such as "Summary: the numbers went up" would otherwise be
+ * inserted as one long hyperlink, and so would javascript: or data: values.
+ *
  * @param {string} value the value a provider returned
- * @return {boolean} true when it parses as a URL
+ * @return {boolean} true when it is an http or https URL
  */
 function isUrl(value) {
 	try {
-		return Boolean(new URL(value))
+		const { protocol } = new URL(value)
+		return protocol === 'http:' || protocol === 'https:'
 	} catch (error) {
 		return false
 	}
