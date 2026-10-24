@@ -129,10 +129,10 @@ export function markdownToHtml(md) {
  * @return {string} HTML fragment
  */
 function inline(text) {
-	let s = esc(text)
-	// Code spans first so their contents are not further transformed. The
-	// placeholder is a private-use code point, which cannot survive esc(),
-	// so it can never collide with the model output.
+	// The code-span placeholder below is a private-use code point. Drop any that
+	// the model emitted itself, so it can never collide with a placeholder.
+	let s = esc(String(text).replace(/\uE000/g, ''))
+	// Code spans first so their contents are not further transformed.
 	const codes = []
 	s = s.replace(/`([^`]+)`/g, (_m, code) => {
 		codes.push(code)
@@ -141,7 +141,9 @@ function inline(text) {
 	s = s.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
 	s = s.replace(/__([^_]+)__/g, '<b>$1</b>')
 	s = s.replace(/(^|[^*])\*([^*]+)\*/g, '$1<i>$2</i>')
-	s = s.replace(/(^|[^_])_([^_]+)_/g, '$1<i>$2</i>')
+	// Underscore emphasis only at word boundaries, as in Markdown itself, so
+	// identifiers such as file_name_value keep their underscores.
+	s = s.replace(/(^|[^\w])_([^_]+)_(?!\w)/g, '$1<i>$2</i>')
 	// Only http(s) links; the URL is already escaped, so quotes cannot break out.
 	s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2">$1</a>')
 	s = s.replace(/\uE000(\d+)\uE000/g, (_m, i) => '<code>' + codes[Number(i)] + '</code>')
