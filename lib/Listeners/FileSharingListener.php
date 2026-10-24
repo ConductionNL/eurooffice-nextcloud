@@ -29,9 +29,7 @@ use OCA\Files_Sharing\Event\BeforeTemplateRenderedEvent;
 use OCA\Eurooffice\AppConfig;
 use OCA\Eurooffice\SettingsData;
 use OCP\AppFramework\Services\IInitialState;
-use OCP\Collaboration\Reference\RenderReferenceEvent;
 use OCP\EventDispatcher\Event;
-use OCP\EventDispatcher\IEventDispatcher;
 use OCP\EventDispatcher\IEventListener;
 use OCP\Server;
 use OCP\Util;
@@ -43,8 +41,7 @@ class FileSharingListener implements IEventListener {
 
     public function __construct(
         private readonly AppConfig $appConfig,
-        private readonly IInitialState $initialState,
-        private readonly IEventDispatcher $eventDispatcher
+        private readonly IInitialState $initialState
     ) {}
 
     public function handle(Event $event): void {
@@ -67,12 +64,9 @@ class FileSharingListener implements IEventListener {
 
             if ($this->appConfig->getSameTab() || $shareType === "file") {
                 Util::addScript("eurooffice", "eurooffice-listener");
-                // Ask Nextcloud to publish its reference providers into this page.
-                // Nothing else does it for us: without this event the provider list
-                // and the apps' picker components are simply absent, so the editor's
-                // "/" menu has nothing to offer. The Text app dispatches it the same
-                // way, next to loading its own bundle.
-                $this->eventDispatcher->dispatchTyped(new RenderReferenceEvent());
+                // No RenderReferenceEvent here: the editor hides the Smart Picker on
+                // public shares (src/editor.js, hasUser is false with a share token),
+                // so publishing every app's picker scripts would only cost page weight.
                 // Styles for the bundle above; it renders the Smart Picker modal, which
                 // is unstyled and full-frame without them.
                 Util::addStyle("eurooffice", "eurooffice-listener");
