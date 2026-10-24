@@ -1,3 +1,8 @@
+/**
+ * SPDX-FileCopyrightText: 2026 Nextcloud GmbH or an Nextcloud affiliate company and Euro-Office contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 /*
  * Smart Picker handling, shared by both frames the editor can run in.
  *
