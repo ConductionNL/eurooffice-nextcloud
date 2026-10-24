@@ -166,10 +166,9 @@ import { describeRegistry, handleSmartPickerRequest, hasProviderRegistry, listPr
 							if (typeof OCA.Eurooffice.docEditor.setAssistantAvailable === 'function') {
 								OCA.Eurooffice.docEditor.setAssistantAvailable(assistantAvailable)
 							}
-							// Give the editor the providers for its "/" menu -- but only
-							// when we are the page that will open the picker. In-frame the
-							// parent pushes its own list, and this page has none to give:
-							// it renders as "base", so no RenderReferenceEvent fires here.
+							// Give the editor the providers for its "/" menu. In-frame the
+							// parent pushes its list too; both pages dispatch
+							// RenderReferenceEvent for logged-in users, so either list works.
 							OCA.Eurooffice.pushSmartPickerProviders('app-ready', hasUser)
 						}
 

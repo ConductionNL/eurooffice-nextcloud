@@ -34,9 +34,10 @@ import { markdownToHtml } from './assistant.js'
  *
  * This, not the frame layout, is what decides whether a page can supply the
  * editor's provider list. A provider is only openable where its picker component
- * is registered, and the editor iframe is rendered with renderAs "base", so no
- * RenderReferenceEvent fires there and it has nothing to offer. Asking the page
- * what it actually has beats inferring it from window.parent.
+ * is registered, and only pages that dispatch RenderReferenceEvent have one: the
+ * editor page does for logged-in users in both layouts (EditorController), public
+ * share pages do not. Asking the page what it actually has beats inferring it
+ * from window.parent.
  *
  * @return {boolean} true when this page knows of any provider
  */
@@ -82,9 +83,8 @@ export function describeRegistry() {
  * synthetic "any link" entry. That entry exists only client-side, so asking OCS
  * for providers can never produce it.
  *
- * Must be called from the page that will open the picker. The editor iframe is
- * rendered with renderAs "base", which means no RenderReferenceEvent and so no
- * providers at all there.
+ * Must be called from the page that will open the picker, so the providers listed
+ * are the ones that page can actually open.
  *
  * @return {Array} [{id, title, icon_url}] safe to hand to the editor
  */
