@@ -15,6 +15,7 @@ use OCA\Eurooffice\Conversion\ConversionProvider;
 use OCA\Eurooffice\Crypt;
 use OCA\Eurooffice\DocumentService;
 use OCA\Eurooffice\FileUtility;
+use OCP\App\IAppManager;
 use OCP\Files\Conversion\ConversionMimeProvider;
 use OCP\Files\File;
 use OCP\IL10N;
@@ -36,6 +37,7 @@ class ConversionProviderTest extends TestCase {
     private DocumentService&MockObject $documentService;
     private Crypt&MockObject $crypt;
     private IURLGenerator&Stub $urlGenerator;
+    private IAppManager&MockObject $appManager;
     private ConversionProvider $provider;
 
     protected function setUp(): void {
@@ -59,6 +61,8 @@ class ConversionProviderTest extends TestCase {
         $trans->method("t")->willReturnArgument(0);
         $trans->method("getLocaleCode")->willReturn("nl_NL");
 
+        $this->appManager = $this->createMock(IAppManager::class);
+
         $this->provider = new ConversionProvider(
             "eurooffice",
             $this->appConfig,
@@ -67,6 +71,7 @@ class ConversionProviderTest extends TestCase {
             $fileUtility,
             $this->urlGenerator,
             $trans,
+            $this->appManager,
         );
     }
 
@@ -95,6 +100,7 @@ class ConversionProviderTest extends TestCase {
             $this->createStub(FileUtility::class),
             $this->createStub(IURLGenerator::class),
             $this->createStub(IL10N::class),
+            $this->createStub(IAppManager::class),
         );
 
         $this->assertSame([], $provider->getSupportedMimeTypes());
@@ -181,7 +187,7 @@ class ConversionProviderTest extends TestCase {
             ->method("getConvertedUri")
             ->with("http://nextcloud/apps/eurooffice/download?doc=signed", "odt", "docx")
             ->willReturn("http://eurooffice/cache/result.docx");
-        $this->documentService->method("request")->willReturn("docx-bytes");
+        $this->documentService->method("request")->willReturn("PK\x03\x04docx");
 
         $provider = new ConversionProvider(
             "eurooffice",
@@ -191,9 +197,10 @@ class ConversionProviderTest extends TestCase {
             $this->createStub(FileUtility::class),
             $this->urlGenerator,
             $this->createStub(IL10N::class),
+            $this->appManager,
         );
 
-        $this->assertSame("docx-bytes", $provider->convertFile($this->file(self::ODT, "/alice/files/a.odt"), self::DOCX));
+        $this->assertSame("PK\x03\x04docx", $provider->convertFile($this->file(self::ODT, "/alice/files/a.odt"), self::DOCX));
     }
 
     /**
@@ -215,9 +222,9 @@ class ConversionProviderTest extends TestCase {
             ->with(["action" => "download", "fileId" => 7, "userId" => "bob"])
             ->willReturn("signed");
         $this->documentService->method("getConvertedUri")->willReturn("http://eurooffice/cache/result.pdf");
-        $this->documentService->method("request")->willReturn("%PDF");
+        $this->documentService->method("request")->willReturn("%PDF-1.7");
 
-        $this->assertSame("%PDF", $this->provider->convertFile($file, "application/pdf"));
+        $this->assertSame("%PDF-1.7", $this->provider->convertFile($file, "application/pdf"));
     }
 
     public static function rejectedConversionProvider(): array {
@@ -266,5 +273,100 @@ class ConversionProviderTest extends TestCase {
         $this->expectException(Exception::class);
 
         $this->provider->convertFile($file, "application/pdf");
+    }
+
+    /**
+     * Outside a web request the app may not be loaded, and then its routes
+     * resolve to the instance root. The app is loaded before the link is built.
+     */
+    public function testConvertFileLoadsAppBeforeBuildingDownloadLink(): void {
+        $this->appConfig->method("isUserAllowedToUse")->willReturn(true);
+        $this->crypt->method("getHash")->willReturn("signed");
+
+        $this->appManager->expects($this->once())->method("loadApp")->with("eurooffice");
+        $this->documentService->method("getConvertedUri")->willReturn("http://eurooffice/cache/result.pdf");
+        $this->documentService->method("request")->willReturn("%PDF-1.7");
+
+        $this->assertSame("%PDF-1.7", $this->provider->convertFile($this->file(self::DOCX), "application/pdf"));
+    }
+
+    /**
+     * A link that does not point at the download route would make the
+     * document server convert whatever page lives there, such as the login page.
+     */
+    public function testConvertFileRejectsUnresolvedDownloadRoute(): void {
+        $this->appConfig->method("isUserAllowedToUse")->willReturn(true);
+        $this->crypt->method("getHash")->willReturn("signed");
+
+        $urlGenerator = $this->createStub(IURLGenerator::class);
+        $urlGenerator->method("linkToRouteAbsolute")->willReturn("https://cloud.example/");
+        $urlGenerator->method("getAbsoluteURL")->willReturn("https://cloud.example/");
+
+        $fileUtility = $this->createStub(FileUtility::class);
+        $fileUtility->method("getKey")->willReturn("filekey");
+
+        $provider = new ConversionProvider(
+            "eurooffice",
+            $this->appConfig,
+            $this->documentService,
+            $this->crypt,
+            $fileUtility,
+            $urlGenerator,
+            $this->createStub(IL10N::class),
+            $this->appManager,
+        );
+
+        $this->documentService->expects($this->never())->method("getConvertedUri");
+
+        $this->expectException(Exception::class);
+
+        $provider->convertFile($this->file(self::DOCX), "application/pdf");
+    }
+
+    public static function unexpectedResultProvider(): array {
+        $loginPage = "<!DOCTYPE html>\n<html class=\"ng-csp\"><head><title>Login</title></head></html>";
+
+        return [
+            "html instead of pdf" => [self::DOCX, "application/pdf", $loginPage],
+            "html instead of docx" => [self::ODT, self::DOCX, $loginPage],
+            "html instead of markdown" => [self::DOCX, "text/markdown", "  <html><body>Login</body></html>"],
+            "html instead of rtf" => [self::DOCX, "text/rtf", $loginPage],
+            "json error instead of pdf" => [self::DOCX, "application/pdf", "{\"message\":\"Access denied\"}"],
+            "empty pdf" => [self::DOCX, "application/pdf", ""],
+        ];
+    }
+
+    /**
+     * A result in the wrong format is an error, never a converted file.
+     */
+    #[DataProvider("unexpectedResultProvider")]
+    public function testConvertFileRejectsUnexpectedResult(string $from, string $to, string $content): void {
+        $this->appConfig->method("isUserAllowedToUse")->willReturn(true);
+        $this->crypt->method("getHash")->willReturn("signed");
+        $this->documentService->method("getConvertedUri")->willReturn("http://eurooffice/cache/result");
+        $this->documentService->method("request")->willReturn($content);
+
+        $this->expectException(Exception::class);
+
+        $this->provider->convertFile($this->file($from), $to);
+    }
+
+    public static function expectedResultProvider(): array {
+        return [
+            "pdf" => [self::DOCX, "application/pdf", "%PDF-1.7\n"],
+            "docx" => [self::ODT, self::DOCX, "PK\x03\x04rest"],
+            "rtf" => [self::DOCX, "text/rtf", "{\\rtf1\\ansi}"],
+            "markdown" => [self::DOCX, "text/markdown", "**Export**\n| a | b |"],
+        ];
+    }
+
+    #[DataProvider("expectedResultProvider")]
+    public function testConvertFileAcceptsExpectedResult(string $from, string $to, string $content): void {
+        $this->appConfig->method("isUserAllowedToUse")->willReturn(true);
+        $this->crypt->method("getHash")->willReturn("signed");
+        $this->documentService->method("getConvertedUri")->willReturn("http://eurooffice/cache/result");
+        $this->documentService->method("request")->willReturn($content);
+
+        $this->assertSame($content, $this->provider->convertFile($this->file($from), $to));
     }
 }

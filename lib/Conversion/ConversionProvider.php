@@ -13,6 +13,7 @@ use OCA\Eurooffice\AppConfig;
 use OCA\Eurooffice\Crypt;
 use OCA\Eurooffice\DocumentService;
 use OCA\Eurooffice\FileUtility;
+use OCP\App\IAppManager;
 use OCP\Files\Conversion\ConversionMimeProvider;
 use OCP\Files\Conversion\IConversionProvider;
 use OCP\Files\File;
@@ -73,6 +74,7 @@ class ConversionProvider implements IConversionProvider {
         private readonly FileUtility $fileUtility,
         private readonly IURLGenerator $urlGenerator,
         private readonly IL10N $trans,
+        private readonly IAppManager $appManager,
     ) {}
 
     /**
@@ -126,7 +128,12 @@ class ConversionProvider implements IConversionProvider {
             "fileId" => $file->getId(),
             "userId" => $userId,
         ]);
+        // Routes of an app are only generated once the app is loaded, which CLI and background jobs do not guarantee
+        $this->appManager->loadApp($this->appName);
         $fileUrl = $this->urlGenerator->linkToRouteAbsolute($this->appName . ".callback.download", ["doc" => $hashUrl]);
+        if (!str_contains($fileUrl, "/apps/" . $this->appName . "/download?")) {
+            throw new \Exception($this->trans->t("Conversion is unavailable for this file."));
+        }
         if (!$this->appConfig->useDemo() && !empty($this->appConfig->getStorageUrl())) {
             $fileUrl = str_replace($this->urlGenerator->getAbsoluteURL("/"), $this->appConfig->getStorageUrl(), $fileUrl);
         }
@@ -136,7 +143,29 @@ class ConversionProvider implements IConversionProvider {
 
         $convertedUrl = $this->documentService->getConvertedUri($fileUrl, $fromExtension, $toExtension, $key, $region);
 
-        return $this->documentService->request($convertedUrl);
+        $content = $this->documentService->request($convertedUrl);
+        if (!is_string($content) || !$this->isExpectedContent($content, $toExtension)) {
+            throw new \Exception($this->trans->t("The document server returned an unexpected result"));
+        }
+
+        return $content;
+    }
+
+    /**
+     * Whether the converted content matches the requested format, so an error
+     * or login page is never stored as the converted file
+     */
+    private function isExpectedContent(string $content, string $toExtension): bool {
+        if ($content === "") {
+            return false;
+        }
+
+        return match ($toExtension) {
+            "pdf" => str_starts_with($content, "%PDF-"),
+            "docx", "odt", "xlsx", "ods", "pptx", "odp" => str_starts_with($content, "PK\x03\x04"),
+            "rtf" => str_starts_with($content, "{\\rtf"),
+            default => preg_match("/^\\s*<(!doctype\\s+html|html[\\s>])/i", $content) !== 1,
+        };
     }
 
     /**
